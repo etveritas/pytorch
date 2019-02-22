@@ -93,6 +93,9 @@ std::ostream& operator<<(std::ostream & out, const IValue & v) {
       return out << v.toDevice();
     case IValue::Tag::GenericDict:
       return printDict(out, v.toGenericDict());
+    case IValue::Tag::UserObject:
+      // TODO we should print the object contents
+      return out << "UserObject<" << v.toUserObject()->name() << ">";
   }
   AT_ERROR("Tag not found\n");
 }

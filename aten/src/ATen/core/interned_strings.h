@@ -154,7 +154,8 @@ namespace c10 {
   _(attr, b)                       \
   _(attr, beg)                     \
   _(attr, idx)                     \
-  _(attr, split)
+  _(attr, split)                   \
+  _(attr, slot)
 #else
 #define FORALL_NS_SYMBOLS(_) \
   _(namespaces, prim)              \

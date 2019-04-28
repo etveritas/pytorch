@@ -118,7 +118,7 @@ template void ComputeColumnOffsets<int16_t>(
     const vector<TensorQuantizationParams>& qparams,
     vector<int32_t>& col_offsets);
 
-fbgemm::CompressedSparseColumn* ExtractOutlierMatrix(
+int CountOutliers(
     int groups,
     int kernel_dim,
     int M,
@@ -136,6 +136,17 @@ fbgemm::CompressedSparseColumn* ExtractOutlierMatrix(
       }
     }
   }
+  return outlier_cnt;
+}
+
+fbgemm::CompressedSparseColumn* ExtractOutlierMatrix(
+    int groups,
+    int kernel_dim,
+    int M,
+    int nbits_in_non_outlier,
+    vector<int8_t>& W_quantized) {
+  int outlier_cnt =
+      CountOutliers(groups, kernel_dim, M, nbits_in_non_outlier, W_quantized);
 
   fbgemm::CompressedSparseColumn* Wq_outlier =
       new fbgemm::CompressedSparseColumn(kernel_dim, M);
@@ -163,6 +174,7 @@ fbgemm::CompressedSparseColumn* ExtractOutlierMatrix(
       }
     }
   } // for each group
+  CAFFE_ENFORCE_EQ(outlier_cnt, Wq_outlier->RowIdx().size());
   Wq_outlier->ColPtr()[M] = outlier_cnt;
 
   return Wq_outlier;
@@ -345,9 +357,9 @@ bool ConvDNNLowPPackWeightOp::TakeDepthWise3x3x3FastPath_() {
   bool ret = this->debug_def().engine() != "DNNLOWP_ACC16" && group_ == M &&
       C_per_group == 1 && group_ % 8 == 0 && this->kernel_.size() == 3 &&
       this->kernel_[0] == 3 && this->kernel_[1] == 3 && this->kernel_[2] == 3 &&
-      this->stride_[0] == this->stride_[1] &&
-      this->stride_[0] == this->stride_[2] &&
       (this->stride_[0] == 1 || this->stride_[0] == 2) &&
+      (this->stride_[1] == 1 || this->stride_[1] == 2) &&
+      (this->stride_[2] == 1 || this->stride_[2] == 2) &&
       this->dilation_[0] == 1 && this->dilation_[1] == 1 &&
       this->dilation_[2] == 1 &&
       accumulate(
@@ -464,9 +476,8 @@ bool ConvDNNLowPPackWeightOp::RunOnDevice() {
   if (this->debug_def().engine() == "DNNLOWP_ACC16" &&
       !fallback_to_32_bit_accumulation) {
     if (nbits_in_non_outlier_ < 8) {
-      Y->W_outlier.reset(ExtractOutlierMatrix(
-          group_, kernel_dim, M, nbits_in_non_outlier_, W_quantized));
-      int outlier_cnt = Y->W_outlier->ColPtr()[M];
+      int outlier_cnt = CountOutliers(
+          group_, kernel_dim, M, nbits_in_non_outlier_, W_quantized);
 
       LOG(INFO) << "Proportion of outlier for Conv layer with weight blob "
                 << this->debug_def().input(0) << " is "
@@ -479,6 +490,9 @@ bool ConvDNNLowPPackWeightOp::RunOnDevice() {
                   << FLAGS_caffe2_dnnlowp_acc16_density_threshold
                   << " . Falling back to acc32";
         fallback_to_32_bit_accumulation = true;
+      } else {
+        Y->W_outlier.reset(ExtractOutlierMatrix(
+            group_, kernel_dim, M, nbits_in_non_outlier_, W_quantized));
       }
     }
 
